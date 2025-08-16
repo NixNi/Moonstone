@@ -11,12 +11,15 @@ from PyQt5.QtCore import Qt
 
 # ----- CONFIG -----
 SERVICE_NAME = "MoonstoneZapret"
-BASE_DIR = Path(__file__).resolve().parent.parent
+if getattr(sys, 'frozen', False):
+    BASE_DIR = Path(sys._MEIPASS)
+else:
+    BASE_DIR = Path(__file__).resolve().parent.parent
 ICON_PATH = BASE_DIR / "icons" / "moonstone.ico"
 BAT_DIR = BASE_DIR / "zapret"
 ENCODING = "cp866"
 LOG_FILE = BASE_DIR / "moonstone.log"
-CHECK_ICON_PATH = BASE_DIR / "icons" / "check.ico"  # Add path to check icon
+CHECK_ICON_PATH = BASE_DIR / "icons" / "check.ico"
 # ------------------
 
 # Настройка логирования
@@ -118,7 +121,7 @@ def create_service(batch_path, display_version):
     executable, args = parse_bat_file(batch_path)
     service_display = f"Moonstone Zapret DPI Bypass version[{display_version}]"
     cmd = (
-        f'sc.exe create "{SERVICE_NAME}" start= demand '
+        f'sc.exe create "{SERVICE_NAME}" start= auto '
         f'displayname= "{service_display}" '
         f'binPath= "\\"{executable}\\" {args}"'
     )
