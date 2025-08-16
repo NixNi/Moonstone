@@ -16,6 +16,7 @@ ICON_PATH = BASE_DIR / "icons" / "moonstone.ico"
 BAT_DIR = BASE_DIR / "zapret"
 ENCODING = "cp866"
 LOG_FILE = BASE_DIR / "moonstone.log"
+CHECK_ICON_PATH = BASE_DIR / "icons" / "check.ico"  # Add path to check icon
 # ------------------
 
 # Настройка логирования
@@ -177,13 +178,18 @@ def update_menu_styles(start_menu, actions, active_version):
         for bat, action in actions.items():
             base_text = bat.stem
             if bat.stem == active_version:
-                action.setText(f"{base_text} [Active]")  # Добавляем метку для активного пункта
                 font = QFont()
                 font.setBold(True)  # Делаем шрифт жирным для активного пункта
                 action.setFont(font)
+                # Добавляем иконку для активного пункта
+                if CHECK_ICON_PATH.exists():
+                    action.setIcon(QIcon(str(CHECK_ICON_PATH)))
+                else:
+                    logging.warning(f"Иконка проверки не найдена: {CHECK_ICON_PATH}")
             else:
-                action.setText(base_text)  # Сбрасываем текст и шрифт
-                action.setFont(QFont())  # Сбрасываем шрифт
+                action.setText(base_text)  # Сбрасываем текст
+                action.setFont(QFont())   # Сбрасываем шрифт
+                action.setIcon(QIcon())   # Удаляем иконку
         start_menu.update()
         logging.info(f"Обновлены стили меню, активная версия: {active_version}")
     except Exception as e:
