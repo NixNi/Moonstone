@@ -5,12 +5,14 @@ from pathlib import Path
 import ctypes
 import re
 import logging
-from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu
+from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction
 from PyQt5.QtGui import QIcon, QFont
 from PyQt5.QtCore import Qt
+import winreg  # Для работы с реестром Windows
 
 # ----- CONFIG -----
 SERVICE_NAME = "MoonstoneZapret"
+APP_NAME = "Moonstone"  # Имя для записи в реестре
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys._MEIPASS)
 else:
@@ -157,12 +159,43 @@ def delete_service():
         logging.info(f"Удаление службы '{SERVICE_NAME}'...")
         run_cmd(f'sc.exe delete "{SERVICE_NAME}"')
 
+# ---- Autostart Functions ----
+def enable_autostart():
+    try:
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+        executable_path = str(Path(sys.executable).resolve())
+        winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, f'"{executable_path}"')
+        winreg.CloseKey(key)
+        logging.info(f"Автозапуск включён для {executable_path}")
+    except Exception as e:
+        logging.error(f"Ошибка при включении автозапуска: {e}")
+
+def disable_autostart():
+    try:
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+        winreg.DeleteValue(key, APP_NAME)
+        winreg.CloseKey(key)
+        logging.info("Автозапуск отключён")
+    except Exception as e:
+        logging.error(f"Ошибка при отключении автозапуска: {e}")
+
+def is_autostart_enabled():
+    try:
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
+        winreg.QueryValueEx(key, APP_NAME)
+        winreg.CloseKey(key)
+        return True
+    except FileNotFoundError:
+        return False
+    except Exception as e:
+        logging.error(f"Ошибка при проверке автозапуска: {e}")
+        return False
+
 # ---- Tray Actions ----
 def create_start_handler(batch_path, start_menu, actions):
     def handler():
         display_version = batch_path.stem
         threading.Thread(target=lambda: start_service(batch_path, display_version), daemon=True).start()
-        # Обновляем стили после запуска службы
         update_menu_styles(start_menu, actions, batch_path.stem)
     return handler
 
@@ -182,17 +215,16 @@ def update_menu_styles(start_menu, actions, active_version):
             base_text = bat.stem
             if bat.stem == active_version:
                 font = QFont()
-                font.setBold(True)  # Делаем шрифт жирным для активного пункта
+                font.setBold(True)
                 action.setFont(font)
-                # Добавляем иконку для активного пункта
                 if CHECK_ICON_PATH.exists():
                     action.setIcon(QIcon(str(CHECK_ICON_PATH)))
                 else:
                     logging.warning(f"Иконка проверки не найдена: {CHECK_ICON_PATH}")
             else:
-                action.setText(base_text)  # Сбрасываем текст
-                action.setFont(QFont())   # Сбрасываем шрифт
-                action.setIcon(QIcon())   # Удаляем иконку
+                action.setText(base_text)
+                action.setFont(QFont())
+                action.setIcon(QIcon())
         start_menu.update()
         logging.info(f"Обновлены стили меню, активная версия: {active_version}")
     except Exception as e:
@@ -255,10 +287,21 @@ def main():
         menu.addMenu(start_menu)
         stop_action = menu.addAction("Stop")
         stop_action.triggered.connect(lambda: on_stop(start_menu, actions))
+
+        # Добавляем пункт меню для автозапуска
+        autostart_action = menu.addAction("Autostart")
+        autostart_action.setCheckable(True)
+        autostart_action.setChecked(is_autostart_enabled())
+        def toggle_autostart(checked):
+            if checked:
+                enable_autostart()
+            else:
+                disable_autostart()
+        autostart_action.toggled.connect(toggle_autostart)
+
         exit_action = menu.addAction("Exit")
         exit_action.triggered.connect(lambda: on_exit(tray, start_menu, actions))
 
-        # Проверяем текущую активную службу и подсвечиваем соответствующий пункт меню
         display_name = get_service_display_name()
         active_version = None
         if display_name:
@@ -272,7 +315,6 @@ def main():
         tray.showMessage("Moonstone", "Приложение запущено", QSystemTrayIcon.Information, 2000)
         logging.info("Системный трей отображён")
 
-        # Запускаем главный цикл приложения
         logging.info("Запуск главного цикла приложения")
         return app.exec_()
 
