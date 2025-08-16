@@ -8,11 +8,13 @@ import logging
 from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction
 from PyQt5.QtGui import QIcon, QFont
 from PyQt5.QtCore import Qt
-import winreg  # Для работы с реестром Windows
+import win32com.client
+from datetime import datetime
+import json
 
 # ----- CONFIG -----
 SERVICE_NAME = "MoonstoneZapret"
-APP_NAME = "Moonstone"  # Имя для записи в реестре
+TASK_NAME = "MoonstoneAutostart"
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(sys._MEIPASS)
 else:
@@ -21,12 +23,14 @@ ICON_PATH = BASE_DIR / "icons" / "moonstone.ico"
 BAT_DIR = BASE_DIR / "zapret"
 ENCODING = "cp866"
 LOG_FILE = BASE_DIR / "moonstone.log"
+STATE_FILE = BASE_DIR / "moonstone_state.json"
 CHECK_ICON_PATH = BASE_DIR / "icons" / "check.ico"
 # ------------------
 
 # Настройка логирования
 logging.basicConfig(
     filename=LOG_FILE,
+    filemode="w",
     level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
     encoding='utf-8'
@@ -153,53 +157,120 @@ def stop_service():
     if service_exists():
         logging.info(f"Остановка службы '{SERVICE_NAME}'...")
         run_cmd(f'sc.exe stop "{SERVICE_NAME}"')
+        #Дополнительно останавливаем Windivert если вдруг запущена
+        logging.info(f"Остановка службы 'WinDivert'...")
+        run_cmd(f'sc.exe stop "WinDivert"')
 
 def delete_service():
     if service_exists():
         logging.info(f"Удаление службы '{SERVICE_NAME}'...")
         run_cmd(f'sc.exe delete "{SERVICE_NAME}"')
 
-# ---- Autostart Functions ----
+# ---- Autostart Functions (Task Scheduler) ----
 def enable_autostart():
     try:
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
-        executable_path = str(Path(sys.executable).resolve())
-        winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, f'"{executable_path}"')
-        winreg.CloseKey(key)
-        logging.info(f"Автозапуск включён для {executable_path}")
+        scheduler = win32com.client.Dispatch('Schedule.Service')
+        scheduler.Connect()
+        root_folder = scheduler.GetFolder('\\')
+        
+        # Создаём задачу
+        task_def = scheduler.NewTask(0)
+        task_def.RegistrationInfo.Description = 'Autostart Moonstone DPI Bypass Application'
+        task_def.RegistrationInfo.Author = 'Nixni Co.'  # Замените на ваше имя компании
+        
+        # Настраиваем триггер на запуск при входе в систему
+        trigger = task_def.Triggers.Create(9)  # 1 = TASK_TRIGGER_LOGON
+        trigger.Id = 'LogonTrigger'
+        trigger.StartBoundary = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+
+        
+        # Настраиваем действие для запуска Moonstone.exe
+        action = task_def.Actions.Create(0)  # 0 = TASK_ACTION_EXEC
+        action.ID = 'MoonstoneStart'
+        action.Path = str(Path(sys.executable).resolve())
+        
+        # Настраиваем параметры задачи
+        task_def.Settings.Enabled = True
+        task_def.Settings.Hidden = False
+        task_def.Settings.RunOnlyIfIdle = False
+        task_def.Settings.DisallowStartIfOnBatteries = False
+        task_def.Settings.StopIfGoingOnBatteries = False
+        task_def.Settings.ExecutionTimeLimit = 'PT0S'  # Без ограничения времени
+        task_def.Principal.RunLevel = 1  # 1 = TASK_RUNLEVEL_HIGHEST (запуск с правами администратора)
+        task_def.Principal.LogonType = 3  # 3 = TASK_LOGON_INTERACTIVE_TOKEN
+        
+        # Регистрируем задачу
+        root_folder.RegisterTaskDefinition(
+            TASK_NAME,
+            task_def,
+            6,  # TASK_CREATE_OR_UPDATE
+            None,  # Пользователь (None = текущий пользователь)
+            None,  # Пароль
+            3   # TASK_LOGON_INTERACTIVE_TOKEN
+        )
+        logging.info(f"Автозапуск включён через Планировщик задач: {TASK_NAME}")
     except Exception as e:
         logging.error(f"Ошибка при включении автозапуска: {e}")
 
 def disable_autostart():
     try:
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
-        winreg.DeleteValue(key, APP_NAME)
-        winreg.CloseKey(key)
-        logging.info("Автозапуск отключён")
+        scheduler = win32com.client.Dispatch('Schedule.Service')
+        scheduler.Connect()
+        root_folder = scheduler.GetFolder('\\')
+        root_folder.DeleteTask(TASK_NAME, 0)
+        logging.info("Автозапуск отключён через Планировщик задач")
     except Exception as e:
         logging.error(f"Ошибка при отключении автозапуска: {e}")
 
 def is_autostart_enabled():
     try:
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
-        winreg.QueryValueEx(key, APP_NAME)
-        winreg.CloseKey(key)
+        scheduler = win32com.client.Dispatch('Schedule.Service')
+        scheduler.Connect()
+        root_folder = scheduler.GetFolder('\\')
+        root_folder.GetTask(TASK_NAME)
         return True
-    except FileNotFoundError:
-        return False
-    except Exception as e:
-        logging.error(f"Ошибка при проверке автозапуска: {e}")
+    except Exception:
         return False
 
 # ---- Tray Actions ----
+def save_state(last_bat=None, stopped=False):
+    try:
+        data = {"last_bat": last_bat, "stopped": stopped}
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        logging.info(f"Сохранено состояние: {data}")
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении состояния: {e}")
+
+def load_state():
+    try:
+        if STATE_FILE.exists():
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            logging.info(f"Загружено состояние: {data}")
+            return data
+    except Exception as e:
+        logging.error(f"Ошибка при загрузке состояния: {e}")
+    return {"last_bat": None, "stopped": True}
+
+def open_config_folder():
+    try:
+        subprocess.Popen(f'explorer "{BASE_DIR}"')
+        logging.info(f"Открыта папка конфигурации: {BASE_DIR}")
+    except Exception as e:
+        logging.error(f"Ошибка при открытии папки конфигурации: {e}")
+
+
 def create_start_handler(batch_path, start_menu, actions):
     def handler():
         display_version = batch_path.stem
+        save_state(last_bat=batch_path.stem, stopped=False)
         threading.Thread(target=lambda: start_service(batch_path, display_version), daemon=True).start()
         update_menu_styles(start_menu, actions, batch_path.stem)
     return handler
 
 def on_stop(start_menu, actions):
+    save_state(last_bat=None, stopped=True) 
     threading.Thread(target=lambda: (stop_service(), delete_service(), update_menu_styles(start_menu, actions, None)), daemon=True).start()
 
 def on_exit(tray, start_menu, actions):
@@ -238,7 +309,7 @@ def main():
         sys.exit(f"Icon not found: {ICON_PATH}")
     bat_files = list(BAT_DIR.glob("*.bat"))
     if not bat_files:
-        logging.error("Файлы .bat не найдены в директории zapret")
+        logging.error(f"Файлы .bat не найдены в директории zapret")
         sys.exit("No .bat files found in zapret directory.")
     logging.info(f"Найдено {len(bat_files)} .bat файлов: {[f.name for f in bat_files]}")
     logging.info(f"Загрузка иконки из: {ICON_PATH}")
@@ -288,7 +359,9 @@ def main():
         stop_action = menu.addAction("Stop")
         stop_action.triggered.connect(lambda: on_stop(start_menu, actions))
 
-        # Добавляем пункт меню для автозапуска
+        config_action = menu.addAction("Config")
+        config_action.triggered.connect(open_config_folder)
+
         autostart_action = menu.addAction("Autostart")
         autostart_action.setCheckable(True)
         autostart_action.setChecked(is_autostart_enabled())
@@ -314,6 +387,15 @@ def main():
         tray.show()
         tray.showMessage("Moonstone", "Приложение запущено", QSystemTrayIcon.Information, 2000)
         logging.info("Системный трей отображён")
+
+        state = load_state()
+        if state["last_bat"] and not state["stopped"]:
+            for bat in bat_files:
+                if bat.stem == state["last_bat"]:
+                    logging.info(f"Автозапуск последнего использованного bat: {bat.stem}")
+                    threading.Thread(target=lambda: start_service(bat, bat.stem), daemon=True).start()
+                    update_menu_styles(start_menu, actions, bat.stem)
+                    break
 
         logging.info("Запуск главного цикла приложения")
         return app.exec_()
