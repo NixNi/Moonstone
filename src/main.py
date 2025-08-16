@@ -6,7 +6,7 @@ import ctypes
 import re
 import logging
 from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu
-from PyQt5.QtGui import QIcon, QColor
+from PyQt5.QtGui import QIcon, QFont
 from PyQt5.QtCore import Qt
 
 # ----- CONFIG -----
@@ -67,6 +67,19 @@ def service_exists():
         return True
     logging.info(f"Служба '{SERVICE_NAME}' не существует.")
     return False
+
+def get_service_display_name():
+    if not service_exists():
+        return None
+    result = run_cmd(f'sc.exe qc "{SERVICE_NAME}"')
+    if result and result.returncode == 0:
+        match = re.search(r'DISPLAY_NAME\s*:\s*(.+)', result.stdout)
+        if match:
+            display_name = match.group(1).strip()
+            logging.info(f"Получено отображаемое имя службы: {display_name}")
+            return display_name
+    logging.error("Не удалось получить отображаемое имя службы")
+    return None
 
 def parse_bat_file(batch_path):
     logging.info(f"Чтение .bat файла: {batch_path}")
@@ -141,20 +154,40 @@ def delete_service():
         run_cmd(f'sc.exe delete "{SERVICE_NAME}"')
 
 # ---- Tray Actions ----
-def create_start_handler(batch_path):
+def create_start_handler(batch_path, start_menu, actions):
     def handler():
         display_version = batch_path.stem
         threading.Thread(target=lambda: start_service(batch_path, display_version), daemon=True).start()
+        # Обновляем стили после запуска службы
+        update_menu_styles(start_menu, actions, batch_path.stem)
     return handler
 
-def on_stop():
-    threading.Thread(target=lambda: (stop_service(), delete_service()), daemon=True).start()
+def on_stop(start_menu, actions):
+    threading.Thread(target=lambda: (stop_service(), delete_service(), update_menu_styles(start_menu, actions, None)), daemon=True).start()
 
-def on_exit(tray):
+def on_exit(tray, start_menu, actions):
     stop_service()
     delete_service()
+    update_menu_styles(start_menu, actions, None)
     tray.hide()
     QApplication.quit()
+
+def update_menu_styles(start_menu, actions, active_version):
+    try:
+        for bat, action in actions.items():
+            base_text = bat.stem
+            if bat.stem == active_version:
+                action.setText(f"{base_text} [Active]")  # Добавляем метку для активного пункта
+                font = QFont()
+                font.setBold(True)  # Делаем шрифт жирным для активного пункта
+                action.setFont(font)
+            else:
+                action.setText(base_text)  # Сбрасываем текст и шрифт
+                action.setFont(QFont())  # Сбрасываем шрифт
+        start_menu.update()
+        logging.info(f"Обновлены стили меню, активная версия: {active_version}")
+    except Exception as e:
+        logging.error(f"Ошибка при обновлении стилей меню: {e}")
 
 # ---- Main Tray App ----
 def main():
@@ -169,60 +202,79 @@ def main():
     logging.info(f"Найдено {len(bat_files)} .bat файлов: {[f.name for f in bat_files]}")
     logging.info(f"Загрузка иконки из: {ICON_PATH}")
 
-    app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(False)
+    try:
+        app = QApplication(sys.argv)
+        app.setQuitOnLastWindowClosed(False)
 
-    tray = QSystemTrayIcon(QIcon(str(ICON_PATH)))
-    tray.setToolTip("Moonstone")
+        tray = QSystemTrayIcon(QIcon(str(ICON_PATH)))
+        tray.setToolTip("Moonstone")
 
-    menu = QMenu()
-    # Кастомизация стиля меню
-    menu.setStyleSheet("""
-        QMenu {
-            background-color: #0d1121; 
-            color: white;
-            border: 1px solid #1e2647;
-            font-size: 16px;
-            padding: 4px;
-        }
-        QMenu::item:selected {
-            background-color: #1e2647;
-        }
-    """)
+        menu = QMenu()
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #0d1121; 
+                color: white;
+                border: 1px solid #1e2647;
+                font-size: 16px;
+                padding: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #1e2647;
+            }
+        """)
 
-    start_menu = QMenu("Start")
-    start_menu.setStyleSheet("""
-        QMenu {
-            background-color: #0d1121;
-            color: white;
-            border: 1px solid #1e2647;
-            font-size: 16px;
-            padding: 4px;
-        }
-        QMenu::item:selected {
-            background-color: #1e2647;
-        }
-    """)
+        start_menu = QMenu("Start")
+        start_menu.setStyleSheet("""
+            QMenu {
+                background-color: #0d1121;
+                color: white;
+                border: 1px solid #1e2647;
+                font-size: 16px;
+                padding: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #1e2647;
+            }
+        """)
 
-    # Добавляем подменю слева (экспериментально, может не работать на всех системах)
-    for bat in bat_files:
-        action = start_menu.addAction(bat.stem)
-        action.triggered.connect(create_start_handler(bat))
+        actions = {}
+        for bat in bat_files:
+            action = start_menu.addAction(bat.stem)
+            action.triggered.connect(create_start_handler(bat, start_menu, actions))
+            actions[bat] = action
 
-    menu.addMenu(start_menu)
-    stop_action = menu.addAction("Stop")
-    stop_action.triggered.connect(on_stop)
-    exit_action = menu.addAction("Exit")
-    exit_action.triggered.connect(lambda: on_exit(tray))
+        menu.addMenu(start_menu)
+        stop_action = menu.addAction("Stop")
+        stop_action.triggered.connect(lambda: on_stop(start_menu, actions))
+        exit_action = menu.addAction("Exit")
+        exit_action.triggered.connect(lambda: on_exit(tray, start_menu, actions))
 
-    tray.setContextMenu(menu)
-    tray.show()
+        # Проверяем текущую активную службу и подсвечиваем соответствующий пункт меню
+        display_name = get_service_display_name()
+        active_version = None
+        if display_name:
+            match = re.search(r'version\[([^\]]+)\]', display_name)
+            if match:
+                active_version = match.group(1)
+        update_menu_styles(start_menu, actions, active_version)
 
-    sys.exit(app.exec_())
+        tray.setContextMenu(menu)
+        tray.show()
+        tray.showMessage("Moonstone", "Приложение запущено", QSystemTrayIcon.Information, 2000)
+        logging.info("Системный трей отображён")
+
+        # Запускаем главный цикл приложения
+        logging.info("Запуск главного цикла приложения")
+        return app.exec_()
+
+    except Exception as e:
+        logging.error(f"Ошибка в главном приложении: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     logging.info("Начало выполнения скрипта")
     if not is_admin():
         logging.info("Требуются права администратора, перезапуск...")
         run_as_admin()
-    main()
+    logging.info("Вызов функции main()")
+    sys.exit(main())
