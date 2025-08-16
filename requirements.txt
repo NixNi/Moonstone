@@ -1,4 +1,2 @@
-pystray
 pillow
-pywin32
-psutil
+PyQt5
