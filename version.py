@@ -16,12 +16,12 @@ VSVersionInfo(
         u'040904B0',
         [StringStruct(u'CompanyName', u'Nixni Co'),
         StringStruct(u'FileDescription', u'Moonstone DPI Bypass Application'),
-        StringStruct(u'FileVersion', u'1.0.0.0'),
+        StringStruct(u'FileVersion', u'2.0.0.0'),
         StringStruct(u'InternalName', u'Moonstone'),
         StringStruct(u'LegalCopyright', u'\xa9 Nixni. All rights reserved.'),
         StringStruct(u'OriginalFilename', u'Moonstone.exe'),
         StringStruct(u'ProductName', u'Moonstone'),
-        StringStruct(u'ProductVersion', u'1.0.0.0')])
+        StringStruct(u'ProductVersion', u'2.0.0.0')])
       ]), 
     VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
   ]
