@@ -95,16 +95,42 @@ def create_service(batch_path, display_version):
     """Create a Windows service from a batch file."""
     executable, args = parse_bat_file(batch_path)
     service_display = f"Moonstone Zapret DPI Bypass version[{display_version}]"
-    cmd = (
-        f'sc.exe create "{SERVICE_NAME}" start= auto '
-        f'displayname= "{service_display}" '
-        f'binPath= "\\"{executable}\\" {args}"'
-    )
+    
+    # Properly quote the executable path if it contains spaces
+    # For sc.exe binPath, the executable must be quoted if it has spaces
+    if ' ' in str(executable):
+        quoted_executable = f'"{executable}"'
+    else:
+        quoted_executable = str(executable)
+    
+    # Construct the full binPath - the entire value needs to be quoted
+    # and the executable within it should also be quoted if it has spaces
+    bin_path_value = f'{quoted_executable} {args}'
+    
+    # For sc.exe, use subprocess.run directly without shell to avoid quote interpretation issues
+    # sc.exe expects parameters like "binPath= value" where value can contain spaces
+    cmd_args = [
+        'sc.exe', 'create', SERVICE_NAME,
+        'start=', 'auto',
+        'displayname=', service_display,
+        'binPath=', bin_path_value
+    ]
+    
     logging.info(f"Создание службы '{SERVICE_NAME}' с отображаемым именем '{service_display}'...")
-    result = run_cmd(cmd)
-    if result and result.returncode != 0:
-        logging.error(f"Не удалось создать службу: {result.stderr}")
-        sys.exit(f"Failed to create service: {result.stderr}")
+    logging.info(f"Выполнение команды: {' '.join(cmd_args)}")
+    try:
+        result = subprocess.run(cmd_args, capture_output=True, text=True, encoding=ENCODING)
+        if result.stdout:
+            logging.info(f"Вывод команды: {result.stdout.strip()}")
+        if result.stderr:
+            logging.error(f"Ошибка команды: {result.stderr.strip()}")
+        if result.returncode != 0:
+            logging.error(f"Не удалось создать службу: {result.stderr}")
+            sys.exit(f"Failed to create service: {result.stderr}")
+    except Exception as e:
+        logging.error(f"Исключение при выполнении команды: {e}")
+        sys.exit(f"Failed to create service: {e}")
+    
     if service_exists():
         logging.info(f"Служба '{SERVICE_NAME}' успешно создана.")
     else:
