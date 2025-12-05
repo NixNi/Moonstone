@@ -16,8 +16,11 @@ else:
 ICON_PATH = BASE_DIR / "icons" / "moonstone.ico"
 CHECK_ICON_PATH = BASE_DIR / "icons" / "check.ico"
 BAT_DIR = BASE_DIR / "zapret"
+BUNDLED_DIR = BAT_DIR / "bundled"
+BACKUP_DIR = BAT_DIR / "bundled_backup"
 LOG_FILE = BASE_DIR / "moonstone.log"
 STATE_FILE = BASE_DIR / "moonstone_state.json"
+GITHUB_RELEASES_API = "https://api.github.com/repos/bol-van/zapret/releases/latest"
 
 # Encoding
 ENCODING = "cp866"

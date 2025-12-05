@@ -13,10 +13,10 @@ from PyQt5.QtCore import Qt
 # Handle both relative and absolute imports
 try:
     from .config import ICON_PATH, CHECK_ICON_PATH, BASE_DIR
-    from . import service, autostart, state
+    from . import service, autostart, state, updater
 except ImportError:
     from src.config import ICON_PATH, CHECK_ICON_PATH, BASE_DIR
-    from src import service, autostart, state
+    from src import service, autostart, state, updater
 
 
 def open_config_folder():
@@ -86,6 +86,27 @@ def update_menu_styles(start_menu, actions, active_version):
         logging.error(f"Ошибка при обновлении стилей меню: {e}")
 
 
+def create_tray_notifier(tray):
+    """Return a function to show tray messages with unified style."""
+    def _notify(title, message, is_error=False):
+        icon = QSystemTrayIcon.Critical if is_error else QSystemTrayIcon.Information
+        tray.showMessage(f"Moonstone - {title}", message, icon, 3000)
+    return _notify
+
+
+def on_update_bundled(tray):
+    """Handle bundled files update."""
+    notifier = create_tray_notifier(tray)
+
+    def run_update():
+        notifier("Обновление пакета", "Запуск обновления...", False)
+        try:
+            updater.update_bundled(tray_notify=notifier)
+        except Exception as e:  # noqa: BLE001
+            logging.error(f"Ошибка при обновлении пакета: {e}", exc_info=True)
+    threading.Thread(target=run_update, daemon=True).start()
+
+
 def create_tray_app(bat_files):
     """Create and configure the system tray application."""
     logging.info("Запуск основного приложения")
@@ -147,6 +168,9 @@ def create_tray_app(bat_files):
 
         config_action = menu.addAction("Config")
         config_action.triggered.connect(open_config_folder)
+
+        update_bundled_action = menu.addAction("Update bundled files")
+        update_bundled_action.triggered.connect(lambda: on_update_bundled(tray))
 
         autostart_action = menu.addAction("Autostart")
         autostart_action.setCheckable(True)
