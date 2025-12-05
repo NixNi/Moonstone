@@ -65,12 +65,15 @@ def parse_bat_file(batch_path):
         logging.error(f"Ошибка при чтении .bat файла: {e}")
         sys.exit(f"Failed to read batch file: {e}")
     
-    bin_match = re.search(r'set "BIN=%~dp0([^"]*)"', bat_content)
-    lists_match = re.search(r'set "LISTS=%~dp0([^"]*)"', bat_content)
+    bin_match = re.search(r'set\s+"?BIN=%~dp0([^"\s]*)"?', bat_content)
+    lists_match = re.search(r'set\s+"?LISTS=%~dp0([^"\s]*)"?', bat_content)
+    configs_match = re.search(r'set\s+"?CONFIGS=%~dp0([^"\s]*)"?', bat_content)
     bin_path = Path(batch_path.parent / (bin_match.group(1) if bin_match else "bundled"))
     lists_path = Path(batch_path.parent / (lists_match.group(1) if lists_match else "lists"))
+    configs_path = Path(batch_path.parent / (configs_match.group(1) if configs_match else "configs"))
     logging.info(f"BIN путь: {bin_path}")
     logging.info(f"LISTS путь: {lists_path}")
+    logging.info(f"CONFIGS путь: {configs_path}")
     
     start_match = re.search(r'start\s+"[^"]*"\s+/min\s+"([^"]+)"\s+(.+)', bat_content, re.DOTALL)
     if not start_match:
@@ -79,8 +82,8 @@ def parse_bat_file(batch_path):
     
     executable = start_match.group(1).strip()
     args = start_match.group(2).strip().replace('^', '').replace('\n', ' ').strip()
-    executable = executable.replace("%BIN%", str(bin_path)+"\\").replace("%LISTS%", str(lists_path)+"\\")
-    args = args.replace("%BIN%", str(bin_path)+"\\").replace("%LISTS%", str(lists_path)+"\\")
+    executable = executable.replace("%BIN%", str(bin_path)+"\\").replace("%LISTS%", str(lists_path)+"\\").replace("%CONFIGS%", str(configs_path)+"\\")
+    args = args.replace("%BIN%", str(bin_path)+"\\").replace("%LISTS%", str(lists_path)+"\\").replace("%CONFIGS%", str(configs_path)+"\\")
     logging.info(f"EXECUTABLE: {executable}")
     logging.info(f"ARGS: {args}")
     

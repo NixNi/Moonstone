@@ -169,7 +169,7 @@ def create_tray_app(bat_files):
         config_action = menu.addAction("Config")
         config_action.triggered.connect(open_config_folder)
 
-        update_bundled_action = menu.addAction("Update bundled files")
+        update_bundled_action = menu.addAction("⭳ Zapret")
         update_bundled_action.triggered.connect(lambda: on_update_bundled(tray))
 
         autostart_action = menu.addAction("Autostart")
