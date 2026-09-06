@@ -1,6 +1,5 @@
 MIT License
 
-Copyright (c) 2016-2025 bol-van
 Copyright (c) 2025 NixNi
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -23,16 +22,26 @@ SOFTWARE.
 
 ---
 
-This repository contains binary files originating from the project by bol-van,  
+This application downloads and bundles the strategy package from the project  
+Flowseal/zapret-discord-youtube, available at:
+https://github.com/Flowseal/zapret-discord-youtube/
+
+That package is licensed under the MIT License and carries the following  
+copyright notices:
+
+Copyright (c) 2016-2026 bol-van
+Copyright (c) 2024-2026 Flowseal
+
+It contains binary files originating from the project by bol-van (zapret),  
 available at: https://github.com/bol-van/zapret/ (licensed under the MIT License).
 
-This repository also includes and depends on WinDivert  
+This application also includes and depends on WinDivert  
 (https://github.com/basil00/WinDivert), which is licensed under your choice of:
 
-1. The GNU Lesser General Public License (LGPL) Version 3, or  
+1. The GNU Lesser General Public License (LGPL) Version 3, or
 2. The GNU General Public License (GPL) Version 2.
 
-Binary distributions of WinDivert are included in this project as-is, without modification.  
+Binary distributions of WinDivert are included as-is, without modification.  
 The corresponding source code and license terms for WinDivert are available at  
 https://github.com/basil00/WinDivert.
 
@@ -40,10 +49,9 @@ https://github.com/basil00/WinDivert.
 
 To comply with the licenses of these projects:
 
-1. The original copyright notices and licenses (above) are retained.  
-2. The use of WinDivert in this project is governed by its licensing terms (LGPLv3/GPLv2).  
-3. This repository includes:
-   - Moonstone's own source code (in the `src/` directory), which is licensed under MIT License
-   - Binary files from the bol-van/zapret project (in the `zapret/` directory), used as-is
-   - Binary distributions of WinDivert, included as-is without modification
-4. The source code of the bol-van/zapret project and WinDivert are not included in this repository, but are available at their respective GitHub repositories.  
+1. The original copyright notices and licenses (above) are retained.
+2. The use of WinDivert in this application is governed by its licensing terms (LGPLv3/GPLv2).
+3. Moonstone's own source code (in the `src/` directory) is licensed under the MIT License.
+4. The zapret strategy package is downloaded at runtime from the Flowseal releases
+   and is used as-is; its source code is not included in this repository but is
+   available at https://github.com/Flowseal/zapret-discord-youtube/.

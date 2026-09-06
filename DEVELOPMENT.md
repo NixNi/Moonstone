@@ -6,13 +6,66 @@ This guide explains how to run Moonstone in debug mode and how to build the appl
 
 The project has been refactored into separate modules:
 
-- `src/config.py` - Configuration constants and paths
+- `src/config.py` - Configuration constants and paths (`BASE_DIR` = bundled
+  resources, `DATA_DIR` = writable runtime data)
 - `src/admin.py` - Admin privilege checking and elevation
-- `src/service.py` - Windows service management functions
+- `src/service.py` - Windows service management functions (parses strategy .bat files)
 - `src/autostart.py` - Task Scheduler autostart functions
 - `src/state.py` - Application state management
 - `src/ui.py` - System tray UI and menu functions
+- `src/updater.py` - Bundle download/update logic (Flowseal releases, .tar.gz)
 - `src/main.py` - Main entry point
+
+## Zapret Bundle
+
+Moonstone does **not** ship the Flowseal strategy package. When the bundle is
+missing (e.g. on first run of the built exe) or outdated, the app downloads it
+from the Flowseal GitHub releases into `zapret/` next to the app (or the
+project root in dev mode). The `zapret/` folder is gitignored.
+
+- `zapret/bin/` - winws.exe, WinDivert driver and packet templates (`.bin`)
+- `zapret/lists/` - hostlist/ipset files, incl. user lists (`*-user.txt`)
+- `zapret/utils/` - game filter and update-check helpers
+- `zapret/general*.bat` - the selectable start strategies
+- `zapret/service.bat` - upstream service installer (not shown in the Start menu)
+
+The version marker is stored in `zapret_version.txt`; a fresh install falls
+back to parsing `LOCAL_VERSION=` from `zapret/service.bat`.
+
+### Installing / Updating the Bundle
+
+`src/updater.py` checks the upstream version file
+(`https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/main/.service/version.txt`)
+and downloads the matching release archive
+(`zapret-discord-youtube-<tag>.tar.gz`) from GitHub. The current bundle is
+backed up to `zapret_backup/`, replaced atomically, and these user files are
+preserved across the swap:
+
+- `lists/list-general-user.txt`
+- `lists/list-exclude-user.txt`
+- `lists/ipset-exclude-user.txt`
+- `utils/game_filter.enabled`
+
+`update_bundled(tray_notify, archive_path, initial=True)` performs a first-run
+install: it skips stopping the service (there is nothing to stop yet) and uses
+install wording in tray notifications. When run from the source tree in dev
+mode the bundle is written to the project root; when frozen, next to the exe
+(`DATA_DIR`).
+
+For a full update dry-run against a local archive (no network):
+
+```bash
+python -c "from src import updater; updater.update_bundled(tray_notify=None, archive_path=r'path\to\zapret-discord-youtube-<tag>.tar.gz')"
+```
+
+### Testing the Batch Parser
+
+Every strategy `.bat` must parse to a `winws.exe` command with no leftover
+`%`/`%~` tokens and reference only files that exist:
+
+```bash
+python -c "from pathlib import Path; from src import service; [service.parse_bat_file(p) for p in Path('zapret').glob('general*.bat')]"
+```
 
 ## Running in Debug Mode
 
@@ -109,7 +162,7 @@ bash build.sh
 Or manually run the PyInstaller command:
 
 ```bash
-pyinstaller --onedir --noconsole --name Moonstone --add-data "icons;icons" --add-data "zapret;zapret" --icon=icons/moonstone.ico --version-file=version.py src/main.py
+pyinstaller --onedir --noconsole --name Moonstone --add-data "icons;icons" --icon=icons/moonstone.ico --version-file=version.py src/main.py
 ```
 
 #### Method 3: Manual PyInstaller Command
@@ -119,7 +172,6 @@ pyinstaller --onedir ^
     --noconsole ^
     --name Moonstone ^
     --add-data "icons;icons" ^
-    --add-data "zapret;zapret" ^
     --icon=icons/moonstone.ico ^
     --version-file=version.py ^
     src/main.py
@@ -131,9 +183,12 @@ pyinstaller --onedir ^
 - `--noconsole`: Hides the console window (set to `--console` for debug builds)
 - `--name Moonstone`: Sets the output name
 - `--add-data "icons;icons"`: Includes the icons directory (Windows uses `;` as separator)
-- `--add-data "zapret;zapret"`: Includes the zapret directory
 - `--icon=icons/moonstone.ico`: Sets the application icon
 - `--version-file=version.py`: Includes version information
+
+**Note:** the zapret bundle is intentionally **not** added to the build - the
+app downloads it from the Flowseal releases on first run (see
+[Zapret Bundle](#zapret-bundle)).
 
 ### Debug Build
 
@@ -147,17 +202,19 @@ To create a debug build with console output:
 
 2. Or use the command line:
    ```bash
-   pyinstaller --onedir --console --name Moonstone --add-data "icons;icons" --add-data "zapret;zapret" --icon=icons/moonstone.ico --version-file=version.py src/main.py
+   pyinstaller --onedir --console --name Moonstone --add-data "icons;icons" --icon=icons/moonstone.ico --version-file=version.py src/main.py
    ```
 
 ### Distribution
 
 After building, the `dist/Moonstone/` folder contains:
 - `Moonstone.exe` - The main executable
-- `_internal/` - All dependencies and resources
-- Icons and zapret files are included in the distribution
+- `_internal/` - All dependencies and resources (icons only; no zapret bundle)
 
-You can zip the entire `dist/Moonstone/` folder for distribution.
+The zapret bundle is **not** distributed with the exe - the app downloads it
+from the Flowseal GitHub releases on first run (internet connection required,
+admin rights needed for the service). You can zip the entire `dist/Moonstone/`
+folder for distribution.
 
 ## Troubleshooting
 
@@ -177,17 +234,21 @@ python main.py  # May have import issues
 
 - Ensure you're running as administrator
 - Check Windows Event Viewer for detailed service errors
-- Verify that zapret batch files exist in the `zapret/` directory
+- Verify that zapret batch files exist in the `zapret/` directory (on first
+  run the app downloads them automatically; if the download failed, use the
+  `⭳ Zapret` tray menu item to retry)
 
 ### Build Errors
 
 - Ensure all paths in `Moonstone.spec` use correct separators (`\\` for Windows)
-- Check that all required files exist (icons, zapret directory)
+- Check that all required files exist (icons directory)
 - Verify PyInstaller version compatibility
 
 ### Logging
 
-Logs are written to `moonstone.log` in the base directory. Check this file for detailed error messages.
+Logs are written to `moonstone.log` in the data directory (`DATA_DIR`:
+project root in dev mode, next to `Moonstone.exe` when frozen). Check this file
+for detailed error messages.
 
 ## Development Workflow
 

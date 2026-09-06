@@ -1,4 +1,6 @@
 #!/bin/bash
 
 # Build executable with PyInstaller on Windows
-pyinstaller --onedir --noconsole --name Moonstone --add-data "icons;icons" --add-data "zapret;zapret" --icon=icons/moonstone.ico --version-file=version.py src/main.py
+# Note: the zapret bundle is NOT shipped in the exe - the app downloads it
+# from Flowseal releases on first run.
+pyinstaller --onedir --noconsole --name Moonstone --add-data "icons;icons" --icon=icons/moonstone.ico --version-file=version.py src/main.py

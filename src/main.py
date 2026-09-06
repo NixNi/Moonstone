@@ -43,8 +43,8 @@ def main():
     
     logging.info("Вызов функции main()")
     
-    # Get batch files
-    bat_files = list(config.BAT_DIR.glob("*.bat"))
+    # Get batch files (strategies only, service*.bat is excluded)
+    bat_files = config.iter_strategy_bats()
     
     # Create and run tray application
     sys.exit(ui.create_tray_app(bat_files))

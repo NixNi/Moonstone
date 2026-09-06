@@ -8,22 +8,22 @@ from pathlib import Path
 
 from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction
 from PyQt5.QtGui import QIcon, QFont
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QObject, pyqtSignal
 
 # Handle both relative and absolute imports
 try:
-    from .config import ICON_PATH, CHECK_ICON_PATH, BASE_DIR
+    from .config import ICON_PATH, CHECK_ICON_PATH, DATA_DIR, iter_strategy_bats
     from . import service, autostart, state, updater
 except ImportError:
-    from src.config import ICON_PATH, CHECK_ICON_PATH, BASE_DIR
+    from src.config import ICON_PATH, CHECK_ICON_PATH, DATA_DIR, iter_strategy_bats
     from src import service, autostart, state, updater
 
 
 def open_config_folder():
     """Open the configuration folder in Windows Explorer."""
     try:
-        subprocess.Popen(f'explorer "{BASE_DIR}"')
-        logging.info(f"Открыта папка конфигурации: {BASE_DIR}")
+        subprocess.Popen(f'explorer "{DATA_DIR}"')
+        logging.info(f"Открыта папка конфигурации: {DATA_DIR}")
     except Exception as e:
         logging.error(f"Ошибка при открытии папки конфигурации: {e}")
 
@@ -94,7 +94,68 @@ def create_tray_notifier(tray):
     return _notify
 
 
-def on_update_bundled(tray):
+class _RebuildBridge(QObject):
+    """Marshals Start-menu rebuild from the updater worker thread to the GUI thread."""
+    rebuild_requested = pyqtSignal()
+
+
+def rebuild_start_menu(start_menu, actions, tray=None):
+    """Rebuild the Start submenu from the current strategy .bat files.
+
+    Called after a successful bundle update: the set of strategies may have
+    changed and references to the old files must be dropped.
+    """
+    start_menu.clear()
+    actions.clear()
+    for bat in iter_strategy_bats():
+        action = start_menu.addAction(bat.stem)
+        action.triggered.connect(create_start_handler(bat, start_menu, actions))
+        actions[bat] = action
+
+    display_name = service.get_service_display_name()
+    active_version = None
+    if display_name:
+        match = re.search(r'version\[([^\]]+)\]', display_name)
+        if match:
+            active_version = match.group(1)
+    update_menu_styles(start_menu, actions, active_version)
+    start_menu.update()
+    logging.info("Меню Start перестроено после обновления")
+
+
+def check_updates_in_background(tray):
+    """Check for a newer zapret bundle in a background thread and notify."""
+    notifier = create_tray_notifier(tray)
+
+    def run():
+        try:
+            current = updater.get_bundle_version()
+            latest = updater.get_latest_version()
+            if updater.is_update_available(current, latest):
+                notifier("Доступно обновление Zapret",
+                         f"Установлена: {current}, доступна: {latest}", False)
+        except Exception:  # noqa: BLE001
+            logging.debug("Фоновая проверка обновлений не удалась", exc_info=True)
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+def bootstrap_bundle(tray, on_done=None):
+    """Download and install the zapret bundle on first run (bundle missing)."""
+    notifier = create_tray_notifier(tray)
+
+    def run():
+        try:
+            updater.update_bundled(tray_notify=notifier, initial=True)
+        except Exception as e:  # noqa: BLE001
+            logging.error(f"Ошибка при первичной установке пакета: {e}", exc_info=True)
+        else:
+            if on_done:
+                on_done()
+    threading.Thread(target=run, daemon=True).start()
+
+
+def on_update_bundled(tray, on_done=None):
     """Handle bundled files update."""
     notifier = create_tray_notifier(tray)
 
@@ -104,6 +165,9 @@ def on_update_bundled(tray):
             updater.update_bundled(tray_notify=notifier)
         except Exception as e:  # noqa: BLE001
             logging.error(f"Ошибка при обновлении пакета: {e}", exc_info=True)
+        else:
+            if on_done:
+                on_done()
     threading.Thread(target=run_update, daemon=True).start()
 
 
@@ -115,10 +179,9 @@ def create_tray_app(bat_files):
         sys.exit(f"Icon not found: {ICON_PATH}")
     
     if not bat_files:
-        logging.error(f"Файлы .bat не найдены в директории zapret")
-        sys.exit("No .bat files found in zapret directory.")
-    
-    logging.info(f"Найдено {len(bat_files)} .bat файлов: {[f.name for f in bat_files]}")
+        logging.warning("Файлы .bat не найдены - пакет zapret будет скачан при первом запуске")
+    else:
+        logging.info(f"Найдено {len(bat_files)} .bat файлов: {[f.name for f in bat_files]}")
     logging.info(f"Загрузка иконки из: {ICON_PATH}")
 
     try:
@@ -162,6 +225,11 @@ def create_tray_app(bat_files):
             action.triggered.connect(create_start_handler(bat, start_menu, actions))
             actions[bat] = action
 
+        # Bridge marshals the Start-menu rebuild from the updater thread to
+        # the GUI thread (queued signal connection).
+        bridge = _RebuildBridge()
+        bridge.rebuild_requested.connect(lambda: rebuild_start_menu(start_menu, actions, tray))
+
         menu.addMenu(start_menu)
         stop_action = menu.addAction("Stop")
         stop_action.triggered.connect(lambda: on_stop(start_menu, actions))
@@ -170,7 +238,9 @@ def create_tray_app(bat_files):
         config_action.triggered.connect(open_config_folder)
 
         update_bundled_action = menu.addAction("⭳ Zapret")
-        update_bundled_action.triggered.connect(lambda: on_update_bundled(tray))
+        update_bundled_action.triggered.connect(
+            lambda: on_update_bundled(tray, on_done=bridge.rebuild_requested.emit)
+        )
 
         autostart_action = menu.addAction("Autostart")
         autostart_action.setCheckable(True)
@@ -199,6 +269,15 @@ def create_tray_app(bat_files):
         tray.show()
         tray.showMessage("Moonstone", "Приложение запущено", QSystemTrayIcon.Information, 2000)
         logging.info("Системный трей отображён")
+
+        if not bat_files:
+            # First run: no bundle yet - download it in the background and
+            # rebuild the Start menu once it is installed.
+            logging.info("Пакет zapret отсутствует, запуск первичной установки")
+            bootstrap_bundle(tray, on_done=bridge.rebuild_requested.emit)
+        else:
+            # Notify about a newer bundle if one is available (non-intrusive).
+            check_updates_in_background(tray)
 
         # Auto-start last used service if state indicates it should be running
         app_state = state.load_state()

@@ -204,4 +204,14 @@ cython_debug/
 # Marimo
 marimo/_static/
 marimo/_lsp/
+marimo/_i18n/
 __marimo__/
+
+# Zapret bundle (downloaded by the app on first run from Flowseal releases)
+/zapret/
+/zapret_backup/
+/zapret_version.txt
+
+# Runtime artifacts
+/moonstone.log
+/moonstone_state.json
