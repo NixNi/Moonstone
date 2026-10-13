@@ -56,7 +56,6 @@ def on_stop(start_menu, actions):
 
 def on_exit(tray, start_menu, actions):
     """Handle exit action."""
-    state.save_state(last_bat=None, stopped=True)
     service.stop_service()
     service.delete_service()
     update_menu_styles(start_menu, actions, None)
@@ -274,7 +273,6 @@ def create_tray_app(bat_files):
             """Ensure all services, WinDivert, and processes are stopped on exit or shutdown."""
             logging.info("Выполняется завершение работы и очистка Moonstone...")
             try:
-                state.save_state(last_bat=None, stopped=True)
                 service.stop_service()
                 service.delete_service()
             except Exception as e:
@@ -322,26 +320,40 @@ def create_tray_app(bat_files):
             # Notify about a newer bundle if one is available (non-intrusive).
             check_updates_in_background(tray)
 
-        # State check: if stopped or off, ensure no configs/processes are running
+        # Check autostart and previous state
         app_state = state.load_state()
-        if app_state.get("stopped", True):
+        is_autostart = autostart.is_autostart_enabled()
+
+        if is_autostart and app_state.get("last_bat") and not app_state.get("stopped", True):
+            target_bat = None
+            for bat in bat_files:
+                if bat.stem == app_state["last_bat"]:
+                    target_bat = bat
+                    break
+
+            if target_bat:
+                logging.info(f"Автозапуск включён: восстановление последнего конфига '{target_bat.stem}'")
+                threading.Thread(
+                    target=lambda: service.start_service(target_bat, target_bat.stem),
+                    daemon=True
+                ).start()
+                update_menu_styles(start_menu, actions, target_bat.stem)
+            else:
+                logging.warning(f"Конфиг '{app_state['last_bat']}' не найден среди файлов .bat")
+                if service.service_exists():
+                    service.stop_service()
+                    service.delete_service()
+                else:
+                    service.clean_residual_processes()
+                update_menu_styles(start_menu, actions, None)
+        else:
+            logging.info(f"Конфиг не запускается автоматически (autostart={is_autostart}, state={app_state})")
             if service.service_exists():
-                logging.info("Обнаружена служба при сохранённом состоянии 'выключено', остановка...")
                 service.stop_service()
                 service.delete_service()
             else:
                 service.clean_residual_processes()
             update_menu_styles(start_menu, actions, None)
-        elif app_state.get("last_bat") and not app_state.get("stopped", False):
-            for bat in bat_files:
-                if bat.stem == app_state["last_bat"]:
-                    logging.info(f"Автозапуск последнего использованного bat: {bat.stem}")
-                    threading.Thread(
-                        target=lambda: service.start_service(bat, bat.stem),
-                        daemon=True
-                    ).start()
-                    update_menu_styles(start_menu, actions, bat.stem)
-                    break
 
         logging.info("Запуск главного цикла приложения")
         return app.exec_()
