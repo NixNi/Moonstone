@@ -354,7 +354,7 @@ def create_service(batch_path, display_version):
 
     cmd_args = [
         'sc.exe', 'create', SERVICE_NAME,
-        'start=', 'auto',
+        'start=', 'demand',
         'displayname=', service_display,
         'binPath=', bin_path_value
     ]
@@ -393,24 +393,63 @@ def start_service(batch_path, display_version):
         raise RuntimeError(f"Failed to start service: {result.stderr}")
 
 
+def _wait_for_process_exit(process_name, timeout_seconds=2.0):
+    """Wait for a process to terminate up to timeout_seconds."""
+    import time
+    start_time = time.time()
+    while time.time() - start_time < timeout_seconds:
+        try:
+            res = subprocess.run(
+                f'tasklist /FI "IMAGENAME eq {process_name}"',
+                shell=True, capture_output=True, text=True, encoding=ENCODING
+            )
+            if process_name.lower() not in (res.stdout or "").lower():
+                return True
+        except Exception:
+            pass
+        time.sleep(0.2)
+    return False
+
+
+def clean_windivert():
+    """Stop and delete WinDivert driver services so no kernel driver stays active."""
+    logging.info("Остановка и удаление служб WinDivert...")
+    run_cmd('net stop "WinDivert" /y')
+    run_cmd('sc.exe stop "WinDivert"')
+    run_cmd('sc.exe delete "WinDivert"')
+
+    run_cmd('net stop "WinDivert14" /y')
+    run_cmd('sc.exe stop "WinDivert14"')
+    run_cmd('sc.exe delete "WinDivert14"')
+
+
+def clean_residual_processes():
+    """Clean up any leftover winws.exe and WinDivert instances."""
+    logging.info("Очистка остаточных процессов winws.exe и служб WinDivert...")
+    run_cmd('taskkill /IM winws.exe /F /T')
+    _wait_for_process_exit("winws.exe", timeout_seconds=1.5)
+    clean_windivert()
+
+
 def stop_service():
     """Stop the service and clean up WinDivert / stray winws processes."""
     if service_exists():
         logging.info(f"Остановка службы '{SERVICE_NAME}'...")
+        run_cmd(f'net stop "{SERVICE_NAME}" /y')
         run_cmd(f'sc.exe stop "{SERVICE_NAME}"')
-        # Дополнительно останавливаем Windivert если вдруг запущена
-        logging.info(f"Остановка службы 'WinDivert'...")
-        run_cmd(f'sc.exe stop "WinDivert"')
-        # WinDivert 1.4 has its own service name
-        logging.info(f"Остановка службы 'WinDivert14'...")
-        run_cmd(f'sc.exe stop "WinDivert14"')
-    # Убиваем оставшиеся процессы winws.exe (как это делает service.bat)
+
+    # Forcefully terminate any residual winws.exe processes
     logging.info("Завершение оставшихся процессов winws.exe...")
-    run_cmd('taskkill /IM winws.exe /F')
+    run_cmd('taskkill /IM winws.exe /F /T')
+    _wait_for_process_exit("winws.exe", timeout_seconds=2.0)
+
+    # Clean up WinDivert kernel driver services
+    clean_windivert()
 
 
 def delete_service():
-    """Delete the service."""
+    """Delete the service and ensure WinDivert is removed."""
     if service_exists():
         logging.info(f"Удаление службы '{SERVICE_NAME}'...")
         run_cmd(f'sc.exe delete "{SERVICE_NAME}"')
+    clean_windivert()

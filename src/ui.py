@@ -56,6 +56,7 @@ def on_stop(start_menu, actions):
 
 def on_exit(tray, start_menu, actions):
     """Handle exit action."""
+    state.save_state(last_bat=None, stopped=True)
     service.stop_service()
     service.delete_service()
     update_menu_styles(start_menu, actions, None)
@@ -265,6 +266,48 @@ def create_tray_app(bat_files):
                 active_version = match.group(1)
         update_menu_styles(start_menu, actions, active_version)
 
+        # Clean legacy registry run keys if autostart is disabled
+        if not autostart.is_autostart_enabled():
+            autostart.clean_legacy_registry()
+
+        def cleanup_on_exit():
+            """Ensure all services, WinDivert, and processes are stopped on exit or shutdown."""
+            logging.info("Выполняется завершение работы и очистка Moonstone...")
+            try:
+                state.save_state(last_bat=None, stopped=True)
+                service.stop_service()
+                service.delete_service()
+            except Exception as e:
+                logging.error(f"Ошибка при очистке Moonstone при завершении: {e}")
+
+        # Connect Qt application shutdown signals
+        app.aboutToQuit.connect(cleanup_on_exit)
+        try:
+            app.commitDataRequest.connect(lambda session_manager: cleanup_on_exit())
+        except Exception:
+            pass
+
+        import atexit
+        atexit.register(cleanup_on_exit)
+
+        # Windows OS console / system shutdown signal handler
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            HandlerRoutine = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+
+            def _ctrl_handler(dwCtrlType):
+                logging.info(f"Получен системный сигнал Windows (dwCtrlType={dwCtrlType}), выполняем очистку...")
+                cleanup_on_exit()
+                return False
+
+            global _console_ctrl_handler_ref
+            _console_ctrl_handler_ref = HandlerRoutine(_ctrl_handler)
+            ctypes.windll.kernel32.SetConsoleCtrlHandler(_console_ctrl_handler_ref, True)
+        except Exception as e:
+            logging.debug(f"Не удалось зарегистрировать SetConsoleCtrlHandler: {e}")
+
         tray.setContextMenu(menu)
         tray.show()
         tray.showMessage("Moonstone", "Приложение запущено", QSystemTrayIcon.Information, 2000)
@@ -279,9 +322,17 @@ def create_tray_app(bat_files):
             # Notify about a newer bundle if one is available (non-intrusive).
             check_updates_in_background(tray)
 
-        # Auto-start last used service if state indicates it should be running
+        # State check: if stopped or off, ensure no configs/processes are running
         app_state = state.load_state()
-        if app_state["last_bat"] and not app_state["stopped"]:
+        if app_state.get("stopped", True):
+            if service.service_exists():
+                logging.info("Обнаружена служба при сохранённом состоянии 'выключено', остановка...")
+                service.stop_service()
+                service.delete_service()
+            else:
+                service.clean_residual_processes()
+            update_menu_styles(start_menu, actions, None)
+        elif app_state.get("last_bat") and not app_state.get("stopped", False):
             for bat in bat_files:
                 if bat.stem == app_state["last_bat"]:
                     logging.info(f"Автозапуск последнего использованного bat: {bat.stem}")

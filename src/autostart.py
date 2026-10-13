@@ -58,8 +58,29 @@ def enable_autostart():
         logging.error(f"Ошибка при включении автозапуска: {e}")
 
 
+def clean_legacy_registry():
+    """Remove legacy autostart entries from registry (HKLM/HKCU Run keys)."""
+    import winreg
+    for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        for subkey in (
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run",
+        ):
+            try:
+                with winreg.OpenKey(root, subkey, 0, winreg.KEY_SET_VALUE | winreg.KEY_READ) as key:
+                    try:
+                        winreg.QueryValueEx(key, "Moonstone")
+                        winreg.DeleteValue(key, "Moonstone")
+                        logging.info(f"Удалена запись автозапуска Moonstone из реестра ({subkey})")
+                    except FileNotFoundError:
+                        pass
+            except Exception as e:
+                logging.debug(f"Ошибка проверки/удаления записи реестра {subkey}: {e}")
+
+
 def disable_autostart():
-    """Disable autostart via Task Scheduler."""
+    """Disable autostart via Task Scheduler and remove legacy registry entries."""
+    clean_legacy_registry()
     try:
         scheduler = win32com.client.Dispatch('Schedule.Service')
         scheduler.Connect()
